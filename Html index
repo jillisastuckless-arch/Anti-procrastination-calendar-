@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f1eb">
+<title>Momentum</title>
+<style>
+* { box-sizing:border-box; }
+body {
+  margin:0; padding:20px;
+  font-family:Arial,sans-serif;
+  background:#f5f1eb; color:#393a37;
+}
+main { max-width:650px; margin:auto; }
+header { padding:18px 0; }
+h1 { margin:0; font-size:30px; color:#526b60; }
+.subtitle { color:#85877f; margin-top:6px; }
+.card {
+  background:white; padding:18px;
+  border-radius:16px; margin:14px 0;
+  box-shadow:0 2px 10px #00000009;
+}
+button,input,select { font:inherit; }
+button {
+  border:0; border-radius:10px; padding:12px 16px;
+  background:#647e70; color:white; cursor:pointer;
+}
+button.secondary { background:#e9eee9; color:#46584d; }
+button:disabled { opacity:.4; cursor:not-allowed; }
+input,select {
+  width:100%; padding:12px; border:1px solid #ddd;
+  border-radius:9px; background:white;
+}
+label { display:block; font-size:13px; margin:12px 0 6px; }
+.topline { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.calendar {
+  display:grid; grid-template-columns:repeat(7,1fr);
+  gap:5px; text-align:center; margin-top:15px;
+}
+.dayname { color:#92958e; font-size:12px; padding:7px 0; }
+.day {
+  min-height:48px; border-radius:9px; padding:8px 2px;
+  background:#f7f7f4; cursor:pointer; font-size:14px;
+}
+.day.selected { background:#647e70; color:white; }
+.day.today { outline:2px solid #c5a77b; }
+.day.has-task:not(.selected)::after {
+  content:""; display:block; width:5px; height:5px;
+  background:#c58e69; border-radius:50%; margin:5px auto 0;
+}
+.task {
+  padding:12px 0; border-bottom:1px solid #eee;
+  display:flex; justify-content:space-between; gap:10px;
+}
+.task:last-child { border:0; }
+.muted { color:#85877f; font-size:13px; }
+.high { color:#b45d50; }
+.medium { color:#aa8650; }
+.low { color:#66836c; }
+.hidden { display:none !important; }
+.challenge { text-align:center; padding:22px 8px; }
+.challenge h2 { color:#526b60; }
+.challenge .equation { font-size:32px; margin:24px; }
+.actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
+.actions button { flex:1; }
+#message { color:#647e70; margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Momentum</h1>
+  <div class="subtitle">Small steps. Real progress.</div>
+</header>
+
+<section id="calendarScreen">
+  <div class="card">
+    <div class="topline">
+      <button class="secondary" id="previous">‹</button>
+      <strong id="month"></strong>
+      <button class="secondary" id="next">›</button>
+    </div>
+    <div class="calendar" id="calendar"></div>
+  </div>
+
+  <div class="card">
+    <div class="topline">
+      <div>
+        <strong id="selectedDate"></strong>
+        <div class="muted" id="taskCount"></div>
+      </div>
+      <button id="addButton">+ Add task</button>
+    </div>
+    <div id="taskList"></div>
+  </div>
+
+  <div class="card hidden" id="formCard">
+    <h3>Add a task</h3>
+    <form id="taskForm">
+      <label for="taskName">What needs to be done?</label>
+      <input id="taskName" required maxlength="100" placeholder="e.g. Renew a card">
+      <label for="taskDate">Due date</label>
+      <input id="taskDate" type="date" required>
+      <label for="priority">Priority</label>
+      <select id="priority">
+        <option value="high">High</option>
+        <option value="medium" selected>Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <div class="actions">
+        <button type="submit">Save task</button>
+        <button type="button" class="secondary" id="cancelAdd">Cancel</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section id="challengeScreen" class="card hidden">
+  <div class="challenge">
+    <div class="muted">BEFORE YOU CONTINUE</div>
+    <h2>Let's pause for a moment.</h2>
+    <p>Complete this little challenge to access your task.</p>
+    <div class="equation" id="equation"></div>
+    <input id="answer" type="number" placeholder="Your answer">
+    <div class="actions">
+      <button id="checkAnswer">Unlock task</button>
+      <button class="secondary" id="backButton">Go back</button>
+    </div>
+    <div id="message"></div>
+  </div>
+</section>
+
+<section id="taskScreen" class="card hidden">
+  <div class="muted">YOUR TASK</div>
+  <h2 id="taskTitle"></h2>
+  <p id="taskInfo" class="muted"></p>
+  <p>What would you like to do?</p>
+  <div class="actions">
+    <button id="completeButton">Completed!</button>
+    <button class="secondary" id="progressButton">Take a step</button>
+    <button class="secondary" id="rescheduleButton">Reschedule</button>
+  </div>
+  <div id="taskMessage" class="muted"></div>
+  <button class="secondary" id="returnButton" style="margin-top:15px">Return to calendar</button>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const today = new Date();
+const dateKey = d => {
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+};
+let tasks = [];
+try { tasks=JSON.parse(localStorage.getItem("momentum-tasks")||"[]"); }
+catch(e) { tasks=[]; }
+let view = new Date(today.getFullYear(),today.getMonth(),1);
+let selected = dateKey(today);
+let currentTask = null;
+let challengeAnswer = 0;
+
+function save() {
+  localStorage.setItem("momentum-tasks",JSON.stringify(tasks));
+}
+function show(screen) {
+  ["calendarScreen","challengeScreen","taskScreen"].forEach(id =>
+    $(id).classList.toggle("hidden",id!==screen));
+}
+function render() {
+  $("month").textContent=view.toLocaleDateString("en",{month:"long",year:"numeric"});
+  $("calendar").innerHTML="";
+  ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(n=>{
+    const el=document.createElement("div");
+    el.className="dayname"; el.textContent=n; $("calendar").append(el);
+  });
+  const first=new Date(view.getFullYear(),view.getMonth(),1);
+  const offset=first.getDay();
+  const count=new Date(view.getFullYear(),view.getMonth()+1,0).getDate();
+  for(let i=0;i<offset;i++) {
+    const blank=document.createElement("div"); $("calendar").append(blank);
+  }
+  for(let d=1;d<=count;d++) {
+    const date=new Date(view.getFullYear(),view.getMonth(),d);
+    const key=dateKey(date);
+    const el=document.createElement("div");
+    el.className="day";
+    if(key===selected) el.classList.add("selected");
+    if(key===dateKey(today)) el.classList.add("today");
+    if(tasks.some(t=>t.date===key&&!t.done)) el.classList.add("has-task");
+    el.textContent=d;
+    el.onclick=()=>{selected=key;render();};
+    $("calendar").append(el);
+  }
+  $("selectedDate").textContent=new Date(selected+"T12:00:00")
+    .toLocaleDateString("en",{weekday:"long",month:"long",day:"numeric"});
+  const list=tasks.filter(t=>t.date===selected);
+  $("taskCount").textContent=list.length+" task(s)";
+  $("taskList").innerHTML="";
+  if(!list.length) $("taskList").textContent="Nothing scheduled. Enjoy the breathing room.";
+  list.forEach(t=>{
+    const el=document.createElement("div"); el.className="task";
+    const left=document.createElement("div");
+    const name=document.createElement("strong");
+    name.textContent=t.done?"✓ "+t.name:t.name;
+    if(t.done) name.style.textDecoration="line-through";
+    const detail=document.createElement("div");
+    detail.className="muted "+t.priority;
+    detail.textContent=t.done?"Completed":t.priority.toUpperCase()+" PRIORITY";
+    left.append(name,detail);
+    el.append(left);
+    if(!t.done) {
+      const btn=document.createElement("button");
+      btn.textContent="Open";
+      btn.onclick=()=>startChallenge(t.id);
+      el.append(btn);
+    }
+    $("taskList").append(el);
+  });
+}
+function startChallenge(id) {
+  currentTask=tasks.find(t=>t.id===id);
+  if(!currentTask)return;
+  const a=Math.floor(Math.random()*20)+5;
+  const b=Math.floor(Math.random()*20)+5;
+  challengeAnswer=a+b;
+  $("equation").textContent=a+" + "+b+" = ?";
+  $("answer").value="";
+  $("message").textContent="";
+  show("challengeScreen");
+}
+$("checkAnswer").onclick=()=>{
+  if(Number($("answer").value)!==challengeAnswer) {
+    $("message").textContent="Not quite. Take your time and try again.";
+    return;
+  }
+  $("taskTitle").textContent=currentTask.name;
+  $("taskInfo").textContent="Due "+currentTask.date+" · "+currentTask.priority+" priority";
+  $("taskMessage").textContent="";
+  show("taskScreen");
+};
+$("backButton").onclick=()=>show("calendarScreen");
+$("returnButton").onclick=()=>{show("calendarScreen");render();};
+$("completeButton").onclick=()=>{
+  currentTask.done=true; save(); show("calendarScreen");render();
+};
+$("progressButton").onclick=()=>{
+  const note=prompt("What small step did you take?");
+  if(note===null)return;
+  currentTask.progress=note;
+  currentTask.done=false;
+  save();
+  $("taskMessage").textContent="Progress recorded: "+note;
+};
+$("rescheduleButton").onclick=()=>{
+  const date=prompt("Enter the new due date (YYYY-MM-DD):",currentTask.date);
+  if(!date)return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||isNaN(Date.parse(date+"T12:00:00"))) {
+    $("taskMessage").textContent="Please enter a valid date.";
+    return;
+  }
+  currentTask.date=date; save();
+  selected=date; view=new Date(date+"T12:00:00");
+  show("calendarScreen");render();
+};
+$("addButton").onclick=()=>{
+  $("formCard").classList.remove("hidden");
+  $("taskDate").value=selected;
+  $("taskName").focus();
+};
+$("cancelAdd").onclick=()=>$("formCard").classList.add("hidden");
+$("taskForm").onsubmit=e=>{
+  e.preventDefault();
+  tasks.push({
+    id:Date.now().toString(),
+    name:$("taskName").value.trim(),
+    date:$("taskDate").value,
+    priority:$("priority").value,
+    done:false
+  });
+  save(); selected=$("taskDate").value;
+  view=new Date(selected+"T12:00:00");
+  $("taskForm").reset();
+  $("formCard").classList.add("hidden");
+  render();
+};
+$("previous").onclick=()=>{
+  view=new Date(view.getFullYear(),view.getMonth()-1,1);render();
+};
+$("next").onclick=()=>{
+  view=new Date(view.getFullYear(),view.getMonth()+1,1);render();
+};
+render();
+</script>
+</body>
+</html><script>
+const $ = id => document.getElementById(id);
+
+let tasks = [];
+try {
+  tasks = JSON.parse(localStorage.getItem("momentum-tasks") || "[]");
+} catch (e) {
+  tasks = [];
+}
+
+let view = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let selected = dateKey(new Date());
+let currentTask = null;
+let challengeAnswer = 0;
+let challengeMode = "";
+
+function dateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+
+function save() {
+  localStorage.setItem("momentum-tasks", JSON.stringify(tasks));
+}
+
+function show(screen) {
+  ["calendarScreen","challengeScreen","taskScreen"].forEach(id =>
+    $(id).classList.toggle("hidden", id !== screen)
+  );
+}
+
+function render() {
+  $("month").textContent = view.toLocaleDateString("en", {
+    month:"long", year:"numeric"
+  });
+
+  $("calendar").innerHTML = "";
+
+  ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(n => {
+    const el = document.createElement("div");
+    el.className = "dayname";
+    el.textContent = n;
+    $("calendar").append(el);
+  });
+
+  const first = new Date(view.getFullYear(), view.getMonth(), 1);
+  const offset = first.getDay();
+  const count = new Date(view.getFullYear(), view.getMonth()+1, 0).getDate();
+
+  for(let i=0;i<offset;i++) {
+    $("calendar").append(document.createElement("div"));
+  }
+
+  for(let d=1;d<=count;d++) {
+    const date = new Date(view.getFullYear(), view.getMonth(), d);
+    const key = dateKey(date);
+    const el = document.createElement("div");
+
+    el.className = "day";
+    if(key===selected) el.classList.add("selected");
+    if(key===dateKey(new Date())) el.classList.add("today");
+    if(tasks.some(t=>t.date===key && !t.done))
+      el.classList.add("has-task");
+
+    el.textContent = d;
+    el.onclick = () => {
+      selected = key;
+      render();
+    };
+    $("calendar").append(el);
+  }
+
+  $("selectedDate").textContent =
+    new Date(selected+"T12:00:00").toLocaleDateString("en", {
+      weekday:"long", month:"long", day:"numeric"
+    });
+
+  const list = tasks.filter(t=>t.date===selected);
+  $("taskCount").textContent = list.length+" task(s)";
+  $("taskList").innerHTML = "";
+
+  if(!list.length) {
+    $("taskList").textContent =
+      "Nothing scheduled. Enjoy the breathing room.";
+  }
+
+  list.forEach(t => {
+    const el = document.createElement("div");
+    el.className = "task";
+
+    const left = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = t.done ? "✓ "+t.name : t.name;
+
+    if(t.done) name.style.textDecoration = "line-through";
+
+    const detail = document.createElement("div");
+    detail.className = "muted "+t.priority;
+    detail.textContent = t.done
+      ? "Completed"
+      : t.priority.toUpperCase()+" PRIORITY";
+
+    left.append(name,detail);
+    el.append(left);
+
+    if(!t.done) {
+      const btn = document.createElement("button");
+      btn.textContent = "Open";
+      btn.onclick = () => openTask(t.id);
+      el.append(btn);
+    }
+
+    $("taskList").append(el);
+  });
+}
+
+// Open tasks according to their priority
+function openTask(id) {
+  currentTask = tasks.find(t=>t.id===id);
+  if(!currentTask) return;
+
+  if(currentTask.priority==="high") {
+    startChallenge("view");
+  } else {
+    showTask();
+  }
+}
+
+function showTask() {
+  $("taskTitle").textContent = currentTask.name;
+  $("taskInfo").textContent =
+    "Due "+currentTask.date+" · "+currentTask.priority+" priority";
+
+  $("taskMessage").textContent =
+    currentTask.progress
+      ? "Previous progress: "+currentTask.progress
+      : "";
+
+  show("taskScreen");
+}
+
+// Create an accountability challenge
+function startChallenge(mode) {
+  challengeMode = mode;
+
+  const a = Math.floor(Math.random()*20)+5;
+  const b = Math.floor(Math.random()*20)+5;
+
+  challengeAnswer = a+b;
+  $("equation").textContent = a+" + "+b+" = ?";
+  $("answer").value = "";
+  $("message").textContent = "";
+
+  $("backButton").textContent = "Emergency exit";
+  show("challengeScreen");
+}
+
+function finishReschedule() {
+  const reason = prompt(
+    "Why are you postponing this task?"
+  );
+
+  if(reason===null || !reason.trim()) {
+    showTask();
+    $("taskMessage").textContent =
+      "Please record a reason before postponing.";
+    return;
+  }
+
+  const date = prompt(
+    "Choose a new due date (YYYY-MM-DD):",
+    currentTask.date
+  );
+
+  if(!date) {
+    showTask();
+    return;
+  }
+
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+     isNaN(Date.parse(date+"T12:00:00"))) {
+    showTask();
+    $("taskMessage").textContent = "Please enter a valid date.";
+    return;
+  }
+
+  currentTask.date = date;
+  currentTask.rescheduleReason = reason.trim();
+
+  save();
+  selected = date;
+  view = new Date(date+"T12:00:00");
+
+  show("calendarScreen");
+  render();
+}
+
+// Check the puzzle answer
+$("checkAnswer").onclick = () => {
+  if(Number($("answer").value)!==challengeAnswer) {
+    $("message").textContent =
+      "Not quite. Take your time and try again.";
+    return;
+  }
+
+  if(challengeMode==="view") {
+    showTask();
+  }
+
+  if(challengeMode==="reschedule") {
+    finishReschedule();
+  }
+
+  if(challengeMode==="leave") {
+    show("calendarScreen");
+    render();
+  }
+};
+
+// Emergency exit
+$("backButton").onclick = () => {
+  show("calendarScreen");
+  render();
+};
+
+// Complete the task
+$("completeButton").onclick = () => {
+  currentTask.done = true;
+  currentTask.progress = "";
+  save();
+  show("calendarScreen");
+  render();
+};
+
+// Record a concrete action
+$("progressButton").onclick = () => {
+  const note = prompt(
+    "What specific step did you take toward completing this task?"
+  );
+
+  if(note===null || !note.trim()) return;
+
+  currentTask.progress = note.trim();
+  save();
+
+  $("taskMessage").textContent =
+    "Progress recorded: "+note;
+};
+
+// Reschedule according to priority
+$("rescheduleButton").onclick = () => {
+  if(currentTask.priority==="low") {
+    finishReschedule();
+  } else {
+    startChallenge("reschedule");
+  }
+};
+
+// Return to calendar
+$("returnButton").onclick = () => {
+  if(currentTask.priority==="high" &&
+     !currentTask.progress) {
+    startChallenge("leave");
+  } else {
+    show("calendarScreen");
+    render();
+  }
+};
+
+// Add a task
+$("addButton").onclick = () => {
+  $("formCard").classList.remove("hidden");
+  $("taskDate").value = selected;
+  $("taskName").focus();
+};
+
+$("cancelAdd").onclick = () => {
+  $("formCard").classList.add("hidden");
+};
+
+$("taskForm").onsubmit = e => {
+  e.preventDefault();
+
+  tasks.push({
+    id:Date.now().toString(),
+    name:$("taskName").value.trim(),
+    date:$("taskDate").value,
+    priority:$("priority").value,
+    done:false,
+    progress:""
+  });
+
+  save();
+  selected = $("taskDate").value;
+  view = new Date(selected+"T12:00:00");
+
+  $("taskForm").reset();
+  $("formCard").classList.add("hidden");
+  render();
+};
+
+// Calendar navigation
+$("previous").onclick = () => {
+  view = new Date(view.getFullYear(),view.getMonth()-1,1);
+  render();
+};
+
+$("next").onclick = () => {
+  view = new Date(view.getFullYear(),view.getMonth()+1,1);
+  render();
+};
+
+render();
+</script>
